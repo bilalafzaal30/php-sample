@@ -1,0 +1,133 @@
+version: '3.4'
+
+x-php-container:
+    &php-container
+    image: marein/php-gaming-website:php-fpm
+    env_file: ./.env
+    environment:
+        APP_ENVIRONMENT: prod
+    depends_on:
+        - mysql
+        - proxysql
+        - redis
+        - rabbitmq
+        - nchan
+    volumes:
+        - proxysql.sock:/var/run/proxysql
+    restart: on-failure
+
+services:
+    ##############################
+    #  Database and application  #
+    ##############################
+    traefik:
+        image: traefik:2.10
+        command:
+            - --providers.docker
+            - --providers.docker.exposedbydefault=false
+        depends_on:
+            - nchan
+            - php-fpm
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+    mysql:
+        image: ghcr.io/gaming-platform/docker-mysql:8.2
+        volumes:
+            - mysql:/var/lib/mysql
+        restart: on-failure
+    proxysql:
+        image: ghcr.io/gaming-platform/docker-proxysql:2.5
+        environment:
+            PROXYSQL_CONFIG: |
+                admin_variables: {
+                    restapi_enabled="true"
+                    hash_passwords="false"
+                }
+                mysql_variables: {
+                    interfaces="/var/run/proxysql/proxysql.sock"
+                    server_version="8.2"
+                    monitor_username="root"
+                    monitor_password="password"
+                    auto_increment_delay_multiplex=0
+                }
+                mysql_servers: (
+                    {hostgroup=1,address="mysql",port=3306,max_connections=100}
+                )
+                mysql_users: (
+                    {username="root",password="password",default_hostgroup=1}
+                )
+        depends_on:
+            - mysql
+        volumes:
+            - proxysql.sock:/var/run/proxysql
+        restart: on-failure
+    redis:
+        image: ghcr.io/gaming-platform/docker-redis:7.2
+        volumes:
+            - redis:/data
+        restart: on-failure
+    rabbitmq:
+        image: ghcr.io/gaming-platform/docker-rabbitmq:3.12
+        hostname: rabbitmq
+        volumes:
+            - rabbitmq:/var/lib/rabbitmq/mnesia
+        restart: on-failure
+    nchan:
+        image: ghcr.io/gaming-platform/docker-nchan:1.3
+        restart: on-failure
+        labels:
+            - "traefik.enable=true"
+            - "traefik.http.routers.nchan.priority=20"
+            - "traefik.http.routers.nchan.rule=PathPrefix(`/sse`)"
+            - "traefik.http.routers.nchan.middlewares=nchan-stripprefix"
+            - "traefik.http.middlewares.nchan-stripprefix.stripprefix.prefixes=/sse"
+    php-fpm:
+        <<: *php-container
+        labels:
+            - "traefik.enable=true"
+            - "traefik.http.routers.php-fpm.priority=10"
+            - "traefik.http.routers.php-fpm.rule=PathPrefix(`/`)"
+            - "traefik.http.services.php-fpm.loadbalancer.server.port=80"
+
+    ##############################
+    #   Long running processes   #
+    ##############################
+    php-connect-four-follow-event-store:
+        <<: *php-container
+        command: bin/console connect-four:follow-event-store pointer all
+    php-chat-follow-event-store:
+        <<: *php-container
+        command: bin/console chat:follow-event-store pointer all
+    php-identity-follow-event-store:
+        <<: *php-container
+        command: bin/console identity:follow-event-store pointer all
+    php-consume-messages:
+        <<: *php-container
+        command: bin/console gaming:consume-messages all
+    php-web-interface-publish-running-games-count-to-nchan:
+        <<: *php-container
+        command: bin/console web-interface:publish-running-games-count-to-nchan
+
+    ##############################
+    #          CI helper         #
+    ##############################
+    selenium:
+        image: selenium/standalone-chrome:4.11
+        environment:
+            SE_NODE_MAX_SESSIONS: 20
+            SE_NODE_OVERRIDE_MAX_SESSIONS: 'true'
+        shm_size: '2gb'
+    php:
+        build:
+            context: .
+            dockerfile: ./docker/Dockerfile
+        entrypoint: ''
+        command: 'true'
+        volumes:
+            - ./tests:/project/tests:delegated
+
+volumes:
+    mysql:
+    proxysql.sock:
+    redis:
+    rabbitmq:

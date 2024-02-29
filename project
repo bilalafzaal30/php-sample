@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+
+set -e
+
+help() {
+    echo
+    echo ------------------
+    echo Available commands
+    echo ------------------
+    echo build
+    echo Build the environment for development.
+    echo
+    echo up
+    echo Shorthand to start an already built project.
+    echo
+    echo down
+    echo Shorthand to down a started project.
+    echo
+    echo composer
+    echo Shorthand for interacting with composer during development.
+    echo
+    echo tests
+    echo Run unit tests, code sniffer, static analyzer and acceptance tests.
+    echo
+    echo unit
+    echo Run unit tests.
+    echo
+    echo sniffer
+    echo Run a code sniffer.
+    echo
+    echo analyzer
+    echo Run a static analyzer.
+    echo
+    echo acceptance
+    echo Run acceptance tests.
+    echo
+    echo buildProductionImages
+    echo Build the production images.
+    echo
+    echo pushProductionImages
+    echo Push the production images to DockerHub.
+    echo
+}
+
+build() {
+    docker compose pull
+    docker compose down --volumes
+    docker compose build --pull
+    docker compose up -d php
+    docker cp "$(docker compose ps -aq php | head -n 1)":/project/vendor ./
+    docker compose up --remove-orphans
+}
+
+up() {
+    docker compose up
+}
+
+down() {
+    docker compose down
+}
+
+composer() {
+    docker compose up -d php
+    docker compose run --rm php composer "$@"
+    docker cp "$(docker compose ps -aq php | head -n 1)":/project/vendor ./
+}
+
+tests() {
+    unit
+    sniffer
+    analyzer
+    acceptance
+}
+
+unit() {
+    docker compose run --rm php vendor/bin/codecept run --skip acceptance --coverage-html
+}
+
+sniffer() {
+    docker compose run --rm php vendor/bin/phpcs
+}
+
+analyzer() {
+    docker compose run --rm php vendor/bin/phpstan analyse
+}
+
+acceptance() {
+    buildProductionImages
+
+    docker compose -f docker-compose.ci.yml -p php-gaming-website-ci build --pull
+    docker compose -f docker-compose.ci.yml -p php-gaming-website-ci up -d
+    docker compose -f docker-compose.ci.yml -p php-gaming-website-ci run --rm php bash -c 'wait-for-tcp-server php-fpm:80,selenium:4444 120 && vendor/bin/codecept run acceptance'
+    docker compose -f docker-compose.ci.yml -p php-gaming-website-ci down -v
+}
+
+buildProductionImages() {
+    docker build --build-arg environment=production --file docker/Dockerfile --tag marein/php-gaming-website:php-fpm .
+}
+
+pushProductionImages() {
+    echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+
+    docker push marein/php-gaming-website:php-fpm
+}
+
+if [ "$*" = "" ]
+then
+    help
+else
+    $1 "${@:2}"
+fi

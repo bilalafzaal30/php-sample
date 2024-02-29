@@ -1,0 +1,27 @@
+paths:
+    tests: tests
+    output: tests/_output
+    data: tests/_data
+    support: tests/_support
+    envs: tests/_envs
+
+actor_suffix: Tester
+
+extensions:
+    enabled:
+        - Codeception\Extension\RunFailed
+
+# We want a high test coverage for our business logic and some special classes.
+# Other parts are covered by acceptance tests, which have no coverage report.
+#
+# Libraries in the /src/Common folder have tests but are not counted in the coverage report.
+# Those libraries are meant to be split out in the future. They don't belong to this project.
+coverage:
+    enabled: true
+    include:
+        - src/Chat/Application/*
+        - src/ConnectFour/Application/Game/Query/Model/Game/*
+        - src/ConnectFour/Domain/*
+        - src/Identity/Domain/*
+        - src/Memory/Domain/*
+        - src/Chat/Application/*
